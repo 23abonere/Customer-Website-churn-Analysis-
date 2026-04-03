@@ -1,0 +1,74 @@
+queries/churn_analysis.sql
+CREATE OR REPLACE TABLE `sql-churn-analysis.analytics.USER_CHURN` AS
+
+--SELECT ---- just put this part here because I want to see how this forms 
+ -- churn_group,
+  --COUNT(*) AS users
+--FROM ( ---- same -- want ot see how it forms 
+WITH 
+        USER_LAST_ACTIVITY 
+        AS(   -- this is a CTE structure that creates a temporary table in to call from 
+SELECT  user_pseudo_id, max(SAFE.PARSE_DATE('%Y%m%d', event_date)) AS last_activity_date ,min(SAFE.PARSE_DATE('%Y%m%d', event_date)) AS first_activity_date 
+FROM `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`
+group by user_pseudo_id), 
+
+LATEST_DATE 
+        AS ( -- same CTE 
+select max(safe.parse_date('%Y%m%d', event_date)) as max_date 
+ FROM `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`
+ ),
+USER_INACTIVITY
+      AS ( 
+ SELECT u.user_pseudo_id, u.last_activity_date,l.max_date,u.first_activity_date,  
+ date_diff(l.max_date, u.last_activity_date, DAY ) as days_inactive ,
+ date_diff(u.last_activity_date,u.first_activity_date ,day) as userlife_span
+ from USER_LAST_ACTIVITY u 
+ cross join latest_date l ) -- using cross join  becuase latest date has only 1 row. 
+
+SELECT user_pseudo_id, last_activity_date, max_date, days_inactive, first_activity_date,userlife_span,
+ CASE 
+   WHEN USER_INACTIVITY.days_inactive between 0 and 30 then 'Active'
+   WHEN USER_INACTIVITY.days_inactive between 31 and 60 then 'At Risk'
+   WHEN USER_INACTIVITY.days_inactive between 61 and 90 then 'Likely Churned'
+   ELSE  'Churned'
+   END AS churn_group
+   from USER_INACTIVITY
+   order by days_inactive asc ; 
+
+--)
+
+select * 
+from `sql-churn-analysis.analytics.USER_CHURN`; 
+
+SELECT user_pseudo_id,
+  event_date,
+  event_name
+FROM `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`;
+
+select churn_group, avg(days_inactive) as avg_days_inactive
+from `analytics.USER_CHURN`
+group by churn_group ; 
+
+
+-- we want to know how many people only clicked once and left, and how many people clicked more than once and stayed 
+--start by grouping each event level to user level 
+with user_events as (
+select user_pseudo_id, count (*) as Total_events --( Number of events) -- so now we are creating a table that shows each user's events. It groups every event from a particular user. 
+from `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`
+group by user_pseudo_id 
+)
+select  -- this side assigns the classification logic
+case 
+when Total_events  = 1 then 'One-Time user' else 'Repeat'
+end as Type_of_user,
+count (*) as users 
+from user_events
+group by Type_of_user;
+
+SELECT *
+FROM `sql-churn-analysis.analytics.USER_CHURN`;
+
+-- Now we want to average the lifespan of these 
+select avg(userlife_span) as avg_lifespan, max(userlife_span)as max_life_span
+from `sql-churn-analysis.analytics.USER_CHURN`
+
